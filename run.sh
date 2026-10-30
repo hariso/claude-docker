@@ -5,4 +5,4 @@ set -euo pipefail
 script_dir=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 source "$script_dir/common.sh"
 
-exec docker run "${run_args[@]}" "$image" "$@"
+docker run "${run_args[@]}" "$image" "$@"

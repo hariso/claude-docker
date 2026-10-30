@@ -1,6 +1,10 @@
 # Sourced by run.sh and run-shell.sh. Expects script_dir; sets image and run_args for docker run.
+# Starts a relay sidecar that an EXIT trap stops, so callers must not exec docker run.
 
 image=claude-code:$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' "$script_dir/Dockerfile")
+
+# Host-loopback ports the container may reach, e.g. the IntelliJ MCP server.
+relay_ports=(64342)
 
 mounts=(
   -v "$HOME/.claude:$HOME/.claude"
@@ -39,10 +43,26 @@ if [[ -z "$inside" ]]; then
   exit 1
 fi
 
+docker network inspect claude >/dev/null 2>&1 || docker network create claude >/dev/null
+
+relay_dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/claude-relay.XXXXXX")
+relay_name=claude-relay-$$
+trap 'docker stop "$relay_name" >/dev/null 2>&1; rm -rf "$relay_dir"' EXIT
+docker run -d --rm --init --network host --name "$relay_name" \
+  --user "$(id -u):$(id -g)" \
+  -v "$relay_dir:/run/claude-relay" \
+  --entrypoint /usr/local/bin/relay.sh \
+  "$image" "${relay_ports[@]}" >/dev/null
+mounts+=(-v "$relay_dir:/run/claude-relay")
+
 run_args=(
-  --rm -it
-  --network host
-  -e TERM -e COLORTERM
+  --rm -it --init
+  --network claude
+  --cap-add NET_ADMIN
+  --security-opt no-new-privileges
+  -e TERM -e COLORTERM -e GH_TOKEN
+  -e "RELAY_PORTS=${relay_ports[*]}"
+  -e "HOST_ADDRS=$(hostname -I)"
   -w "$PWD"
   "${mounts[@]}"
 )
